@@ -5,6 +5,8 @@
 // @description  Grupperar "Mina aktiviteter" + färgmarkerar plus/open/private + OLED-black + separata mobilfärger
 // @author       Jörgen
 // @match        https://www.citypolarna.se/*
+// @updateURL    https://raw.githubusercontent.com/iJorgen/Citypolarna/refs/heads/main/citypolarna.user.js
+// @downloadURL  https://raw.githubusercontent.com/iJorgen/Citypolarna/refs/heads/main/citypolarna.user.js
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
