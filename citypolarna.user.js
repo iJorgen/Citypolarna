@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Citypolarna - Optimized
 // @namespace    https://citypolarna.se
-// @version      1.0
-// @description  Grupperar "Mina aktiviteter" + färgmarkerar plus/open/private + OLED-black + separata mobilfärger
+// @version      1.1
+// @description  Grupperar "Mina aktiviteter" + färgmarkerar plus/open/private + OLED-black + separata mobilfärger + grupperingstoggle
 // @author       Jörgen
 // @match        https://www.citypolarna.se/*
 // @updateURL    https://raw.githubusercontent.com/iJorgen/Citypolarna/refs/heads/main/citypolarna.user.js
@@ -13,6 +13,10 @@
 
 (function () {
   'use strict';
+
+  // ── Persisterat tillstånd för gruppering ─────────────────────────────────
+  const STORAGE_KEY = 'citypolarna_grouping';
+  let groupingEnabled = localStorage.getItem(STORAGE_KEY) !== 'false';
 
   // ── Färgtabell Desktop — justera fritt ──────────────────────────────────
   const colorsDesktop = {
@@ -71,11 +75,15 @@
     'event_row__date',
   ];
 
+  // ── Spara originalordningen innan vi rör DOM ──────────────────────────────
+  // Används för att återställa "default"-listan utan att ladda om sidan.
+  let savedOriginalRows = null;
+
   // ── Klassificera en rad baserat på SVG-id ────────────────────────────────
   function classifyRow(row) {
     const svgId = row.querySelector('td.event_row__status svg')?.id ?? '';
-    if (svgId === 'icon_coming') return 'anmald';
-    if (svgId === 'icon_reserv') return 'reserv';
+    if (svgId === 'icon_coming')   return 'anmald';
+    if (svgId === 'icon_reserv')   return 'reserv';
     if (svgId === 'icon_unbooked') return 'intresserad';
     return 'default';
   }
@@ -84,7 +92,7 @@
   function getPalette(table, cat, isMobile) {
     const scheme = isMobile ? colorsMobile : colorsDesktop;
     if (table.classList.contains('plus_event')) return scheme.plus[cat];
-    if (table.classList.contains('private')) return scheme.private[cat];
+    if (table.classList.contains('private'))    return scheme.private[cat];
     return scheme.open[cat];
   }
 
@@ -124,7 +132,7 @@
 
     tables.forEach(table => {
       const isMobile = table.classList.contains('mobile');
-      const palette = getPalette(typeTable, cat, isMobile);
+      const palette  = getPalette(typeTable, cat, isMobile);
       colorRow(table, palette);
     });
   }
@@ -141,6 +149,7 @@
   // ── Skapa sektionsrubrik ─────────────────────────────────────────────────
   function makeSectionHeader(text, color) {
     const h = document.createElement('div');
+    h.dataset.groupHeader = '1'; // markör så vi lätt kan ta bort dem
     h.style.cssText = `
       font-size: 1.1em;
       font-weight: bold;
@@ -155,41 +164,58 @@
   }
 
   // ── Gruppera + färglägg "Mina aktiviteter" ───────────────────────────────
-  function groupAndColor(wrapperDiv) {
+  function applyGrouped(wrapperDiv) {
     const rows = [...wrapperDiv.querySelectorAll(':scope > div.event_row_table')];
     if (!rows.length) return;
 
-    const groups = { anmald: [], reserv: [], intresserad: [] };
+    // Spara originalordning första gången (före vi rör DOM)
+    if (!savedOriginalRows) {
+      savedOriginalRows = rows.slice();
+    }
+
+    const groups = { anmald: [], reserv: [], intresserad: [], default: [] };
 
     for (const row of rows) {
       const cat = classifyRow(row);
-      if (cat === 'default') continue;
       groups[cat].push(row);
     }
 
-    // Färglägg
+    // Färglägg alla kategorier
     for (const [cat, rowList] of Object.entries(groups)) {
-      for (const row of rowList) {
-        colorRowTables(row, cat);
-      }
+      for (const row of rowList) colorRowTables(row, cat);
     }
 
     // Bygg om DOM med sektionsrubriker
     wrapperDiv.innerHTML = '';
 
     const sections = [
-      { key: 'anmald', label: '✅ Anmäld', color: '#2a7a2a' },
-      { key: 'reserv', label: '🟡 Reserv', color: '#b07800' },
+      { key: 'anmald',      label: '✅ Anmäld',      color: '#2a7a2a' },
+      { key: 'reserv',      label: '🟡 Reserv',      color: '#b07800' },
       { key: 'intresserad', label: '👁 Intresserad', color: '#aa0000' },
     ];
 
     for (const { key, label, color } of sections) {
       if (groups[key].length === 0) continue;
       wrapperDiv.appendChild(makeSectionHeader(`${label} (${groups[key].length})`, color));
-      for (const row of groups[key]) {
-        wrapperDiv.appendChild(row);
-      }
+      for (const row of groups[key]) wrapperDiv.appendChild(row);
     }
+
+    // Okategoriserade rader läggs sist, utan rubrik
+    for (const row of groups.default) wrapperDiv.appendChild(row);
+  }
+
+  // ── Återställ originalordning + färglägg utan gruppering ─────────────────
+  function applyUngrouped(wrapperDiv) {
+    // Ta bort sektionsrubriker
+    wrapperDiv.querySelectorAll('[data-group-header]').forEach(h => h.remove());
+
+    // Återställ originalordningen om vi har den sparad
+    if (savedOriginalRows) {
+      savedOriginalRows.forEach(row => wrapperDiv.appendChild(row));
+    }
+
+    // Färglägg i originalordning (färger alltid aktiva)
+    colorSection(wrapperDiv);
   }
 
   // ── Hitta wrapper för en given sektion ───────────────────────────────────
@@ -218,10 +244,65 @@
     });
   }
 
+  // ── Applicera rätt läge på "Mina aktiviteter"-wrappern ───────────────────
+  function applyMinaWrapper() {
+    const minaWrapper = findWrapper('calendar_list_my', 'my_event_list');
+    if (!minaWrapper) return;
+    if (groupingEnabled) {
+      applyGrouped(minaWrapper);
+    } else {
+      applyUngrouped(minaWrapper);
+    }
+  }
+
+  // ── Toggle-knapp ─────────────────────────────────────────────────────────
+  function createToggleButton() {
+    // Skapa inte dubbelt om knappen redan finns
+    if (document.getElementById('cp-group-toggle')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'cp-group-toggle';
+
+    function updateBtn() {
+      btn.textContent = groupingEnabled ? '📋 Visa som lista' : '🗂 Visa grupperat';
+      btn.title = groupingEnabled
+        ? 'Stäng av gruppering — visa aktiviteter i standardordning'
+        : 'Slå på gruppering — sortera i Anmäld / Reserv / Intresserad';
+    }
+
+    btn.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 99999;
+      padding: 8px 14px;
+      background: #1a1a2e;
+      color: #fff;
+      border: 1px solid #444;
+      border-radius: 8px;
+      font-size: 0.9em;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      transition: background 0.2s;
+    `;
+
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#2e2e50'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = '#1a1a2e'; });
+
+    btn.addEventListener('click', () => {
+      groupingEnabled = !groupingEnabled;
+      localStorage.setItem(STORAGE_KEY, groupingEnabled);
+      updateBtn();
+      applyMinaWrapper();
+    });
+
+    updateBtn();
+    document.body.appendChild(btn);
+  }
+
   // ── Huvudfunktion ────────────────────────────────────────────────────────
   function run() {
-    const minaWrapper = findWrapper('calendar_list_my', 'my_event_list');
-    if (minaWrapper) groupAndColor(minaWrapper);
+    applyMinaWrapper();
 
     const invWrapper = findWrapper('calendar_list_my_invitations', null);
     if (invWrapper) colorSection(invWrapper);
@@ -233,6 +314,7 @@
     if (weekWrapper) colorSection(weekWrapper);
 
     applyOled();
+    createToggleButton();
   }
 
   // ── Deterministisk trigger — väntar på att sidans JS satt typ-klasserna ──
