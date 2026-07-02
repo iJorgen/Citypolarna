@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Citypolarna - Optimized
 // @namespace    https://citypolarna.se
-// @version      1.2
-// @description  Grupperar "Mina aktiviteter" + färgmarkerar plus/open/private + OLED-black + separata mobilfärger + grupperingstoggle
+// @version      1.3
+// @description  Grupperar "Mina aktiviteter" + färgmarkerar plus/open/private/tips/draft + OLED-black + separata mobilfärger + grupperingstoggle
 // @author       Jörgen
 // @match        https://www.citypolarna.se/*
 // @updateURL    https://raw.githubusercontent.com/iJorgen/Citypolarna/refs/heads/main/citypolarna.user.js
@@ -15,9 +15,7 @@
   'use strict';
 
   // ── OLED-tröskelvärden — justera fritt ──────────────────────────────────
-  // isNearlyWhite: kanaler >= detta värde räknas som "nästan vit" text
   const OLED_WHITE_THRESHOLD = 180;
-  // isNearlyBlack: kanaler <= detta värde räknas som "nästan svart" bakgrund
   const OLED_BLACK_THRESHOLD = 30;
 
   // ── Persisterat tillstånd för gruppering ─────────────────────────────────
@@ -44,6 +42,18 @@
       intresserad: { bg: '#770808', left: '#770808', date: '#222222' },
       default:     { bg: '#770808', left: '#770808', date: '#222222' },
     },
+    tips: {
+      anmald:      { bg: '#5a3e00', left: '#5a3e00', date: '#222222' },
+      reserv:      { bg: '#5a3e00', left: '#5a3e00', date: '#222222' },
+      intresserad: { bg: '#5a3e00', left: '#5a3e00', date: '#222222' },
+      default:     { bg: '#5a3e00', left: '#5a3e00', date: '#222222' },
+    },
+    draft: {
+      anmald:      { bg: '#2e2e2e', left: '#2e2e2e', date: '#222222' },
+      reserv:      { bg: '#2e2e2e', left: '#2e2e2e', date: '#222222' },
+      intresserad: { bg: '#2e2e2e', left: '#2e2e2e', date: '#222222' },
+      default:     { bg: '#2e2e2e', left: '#2e2e2e', date: '#222222' },
+    },
   };
 
   // ── Färgtabell Mobil — justera fritt ────────────────────────────────────
@@ -55,16 +65,28 @@
       default:     { bg: '#2e157a', left: '#2e157a', date: '#2e157a' },
     },
     open: {
-      anmald:      { bg: '#084408', left: '#084408', date: '#084408' },
-      reserv:      { bg: '#084408', left: '#084408', date: '#084408' },
-      intresserad: { bg: '#084408', left: '#084408', date: '#084408' },
-      default:     { bg: '#084408', left: '#084408', date: '#084408' },
+      anmald:      { bg: '#115511', left: '#115511', date: '#115511' },
+      reserv:      { bg: '#115511', left: '#115511', date: '#115511' },
+      intresserad: { bg: '#115511', left: '#115511', date: '#115511' },
+      default:     { bg: '#115511', left: '#115511', date: '#115511' },
     },
     private: {
-      anmald:      { bg: '#770808', left: '#770808', date: '#770808' },
-      reserv:      { bg: '#770808', left: '#770808', date: '#770808' },
-      intresserad: { bg: '#770808', left: '#770808', date: '#770808' },
-      default:     { bg: '#770808', left: '#770808', date: '#770808' },
+      anmald:      { bg: '#771111', left: '#771111', date: '#771111' },
+      reserv:      { bg: '#771111', left: '#771111', date: '#771111' },
+      intresserad: { bg: '#771111', left: '#771111', date: '#771111' },
+      default:     { bg: '#771111', left: '#771111', date: '#771111' },
+    },
+    tips: {
+      anmald:      { bg: '#5a3e00', left: '#5a3e00', date: '#5a3e00' },
+      reserv:      { bg: '#5a3e00', left: '#5a3e00', date: '#5a3e00' },
+      intresserad: { bg: '#5a3e00', left: '#5a3e00', date: '#5a3e00' },
+      default:     { bg: '#5a3e00', left: '#5a3e00', date: '#5a3e00' },
+    },
+    draft: {
+      anmald:      { bg: '#2e2e2e', left: '#2e2e2e', date: '#2e2e2e' },
+      reserv:      { bg: '#2e2e2e', left: '#2e2e2e', date: '#2e2e2e' },
+      intresserad: { bg: '#2e2e2e', left: '#2e2e2e', date: '#2e2e2e' },
+      default:     { bg: '#2e2e2e', left: '#2e2e2e', date: '#2e2e2e' },
     },
   };
 
@@ -92,6 +114,8 @@
     const scheme = isMobile ? colorsMobile : colorsDesktop;
     if (table.classList.contains('plus_event')) return scheme.plus[cat];
     if (table.classList.contains('private')) return scheme.private[cat];
+    if (table.classList.contains('tips_event')) return scheme.tips[cat];
+    if (table.classList.contains('draft')) return scheme.draft[cat];
     return scheme.open[cat];
   }
 
@@ -123,14 +147,14 @@
 
   // ── Färglägg alla tabeller i en rad (desktop + mobile med rätt palett) ───
   function colorRowTables(row, cat) {
+    // row = wrapper-<div> som har ALLA typ-klasser (plus_event, draft, tips_event osv.)
+    // De inre <table>-elementen saknar tips_event/draft — läs därför alltid från diven
     const tables = row.querySelectorAll('table.event_row_table');
     if (!tables.length) return;
 
-    const typeTable = tables[0];
-
     tables.forEach(table => {
       const isMobile = table.classList.contains('mobile');
-      const palette = getPalette(typeTable, cat, isMobile);
+      const palette = getPalette(row, cat, isMobile); // <-- row istället för tables[0]
       colorRow(table, palette);
     });
   }
@@ -222,7 +246,7 @@
       ?? null;
   }
 
-  // ── OLED-black: ersätt nästan-svart bakgrund och nästan-vit text ─────────
+  // ── OLED-black ───────────────────────────────────────────────────────────
   function isNearlyWhite(rgb) {
     const m = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
     if (!m) return false;
@@ -242,7 +266,6 @@
   function applyOled(root = document) {
     root.querySelectorAll('*').forEach(el => {
       const cs = getComputedStyle(el);
-
       if (isNearlyBlack(cs.backgroundColor)) {
         el.style.setProperty('background-color', '#000000', 'important');
       }
@@ -381,7 +404,9 @@
     return wrapper.querySelector(
       'table.event_row_table.open, ' +
       'table.event_row_table.plus_event, ' +
-      'table.event_row_table.private'
+      'table.event_row_table.private, ' +
+      'table.event_row_table.tips_event, ' +
+      'table.event_row_table.draft'
     ) !== null;
   }
 
